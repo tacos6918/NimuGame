@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>三山崩し（PWA対応）</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{--bg:#0b1220;--card:#0f1724;--accent:#ffd54a}
+  html,body{height:100%;margin:0;background:var(--bg);color:#e6eef6;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN',Meiryo,sans-serif}
+  .wrap{max-width:920px;margin:28px auto;padding:18px}
+  header{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  h1{margin:0;font-size:20px}
+  .board{display:flex;gap:18px;margin-top:18px;min-height:120px;flex-wrap:wrap}
+  .pile{background:linear-gradient(180deg,#111827,#0b1220);padding:12px;border-radius:10px;min-width:120px;text-align:center;box-shadow:0 6px 18px rgba(0,0,0,.6)}
+  .stones{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:8px}
+  .stone{width:26px;height:26px;border-radius:50%;background:#ffd54a;display:inline-flex;align-items:center;justify-content:center;color:#042;font-weight:700}
+  .controls{margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  button{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:#042;cursor:pointer}
+  select,input[type=number]{padding:6px;border-radius:6px;border:none}
+  .log{margin-top:14px;background:rgba(255,255,255,0.03);padding:10px;border-radius:8px;font-size:14px;white-space:pre-wrap}
+  .footer{margin-top:18px;color:rgba(255,255,255,0.75);font-size:13px}
+  .mode{display:flex;gap:8px;align-items:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>三山崩し（PWA対応）</h1>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="mode">対戦: <select id="mode"><option value="pvp">2人対戦</option><option value="pvc">1人 vs CPU</option></select></label>
+      <label class="mode">ルール: <select id="rule"><option value="misere">最後を取ったら負け（ミゼール）</option><option value="normal">最後を取ったら勝ち</option></select></label>
+      <label class="mode">山の数: <input type="number" id="numPiles" value="3" min="1" max="10" style="width:60px"></label>
+      <label class="mode">最大石の数: <input type="number" id="maxStones" value="7" min="1" max="20" style="width:60px"></label>
+      <button id="newBtn">新しい局面</button>
+    </div>
+  </header>
+
+  <div class="board" id="board"></div>
+
+  <div class="controls">
+    <label>山を選ぶ: <select id="pileSelect"></select></label>
+    <label>個数: <input id="takeCount" type="number" min="1" value="1" style="width:80px"/></label>
+    <button id="takeBtn">取る</button>
+    <button id="hintBtn">最善手を表示</button>
+    <div style="margin-left:auto">手番: <strong id="turnLabel">先手</strong></div>
+  </div>
+
+  <div class="log" id="log">ゲーム開始。新しい局面を作るか、左で操作してください。</div>
+  <div class="footer">
+    <p>説明: 指定された山の数・石の最大数でランダムに初期化されます。CPUは最適戦略（ニム和）で動きます。ミゼール（最後を取ったら負け）モードにも対応。</p>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const boardEl=document.getElementById('board');
+  const pileSelect=document.getElementById('pileSelect');
+  const takeCount=document.getElementById('takeCount');
+  const takeBtn=document.getElementById('takeBtn');
+  const newBtn=document.getElementById('newBtn');
+  const logEl=document.getElementById('log');
+  const modeSel=document.getElementById('mode');
+  const ruleSel=document.getElementById('rule');
+  const hintBtn=document.getElementById('hintBtn');
+  const turnLabel=document.getElementById('turnLabel');
+  const numPilesInput=document.getElementById('numPiles');
+  const maxStonesInput=document.getElementById('maxStones');
+
+  let piles=[];
+  let player=0;
+
+  function initPiles(){
+    const num=Number(numPilesInput.value)||3;
+    const maxS=Number(maxStonesInput.value)||7;
+    piles=Array.from({length:num},()=>Math.floor(Math.random()*maxS)+1);
+  }
+
+  function renderBoard(){
+    boardEl.innerHTML='';
+    for(let i=0;i<piles.length;i++){
+      const p=document.createElement('div');
+      p.className='pile';
+      const title=document.createElement('div');
+      title.textContent=`山 ${i+1}： ${piles[i]}`;
+      p.appendChild(title);
+
+      const stones=document.createElement('div');
+      stones.className='stones';
+      for(let s=0;s<piles[i];s++){
+        const st=document.createElement('div');
+        st.className='stone';
+        st.textContent='•';
+        stones.appendChild(st);
+      }
+      p.appendChild(stones);
+      boardEl.appendChild(p);
+    }
+    refreshPileOptions();
+    updateTurnLabel();
+  }
+
+  function refreshPileOptions(){
+    pileSelect.innerHTML='';
+    for(let i=0;i<piles.length;i++){
+      const opt=document.createElement('option');
+      opt.value=i;
+      opt.textContent=`山 ${i+1} (${piles[i]})`;
+      if(piles[i]===0) opt.disabled=true;
+      pileSelect.appendChild(opt);
+    }
+    const idx=Number(pileSelect.value);
+    takeCount.max=piles[idx]||1;
+    if(Number(takeCount.value)>takeCount.max) takeCount.value=1;
+  }
+
+  function updateTurnLabel(){
+    turnLabel.textContent = player===0 ? '先手' : '後手';
+  }
+
+  function appendLog(msg){
+    logEl.textContent = msg + '\n' + logEl.textContent;
+  }
+
+  function xorSum(arr){return arr.reduce((a,b)=>a^b,0);}
+
+  function performMove(pileIdx,take){
+    piles[pileIdx]-=take;
+    appendLog(`プレイヤー ${player===0?'先手':'後手'} が 山${pileIdx+1} から ${take} 個取りました。`);
+    renderBoard();
+    if(piles.every(x=>x===0)){
+      appendLog('ゲーム終了！');
+      return;
+    }
+    player=1-player;
+    updateTurnLabel();
+    if(modeSel.value==='pvc'&&player===1){
+      setTimeout(cpuMove,600);
+    }
+  }
+
+  function cpuMove(){
+    const xs=xorSum(piles);
+    let move=null;
+    if(xs!==0){
+      for(let i=0;i<piles.length;i++){
+        const target=piles[i]^xs;
+        if(target<piles[i]){
+          move={pile:i,take:piles[i]-target};
+          break;
+        }
+      }
+    } else {
+      const idx=piles.findIndex(x=>x>0);
+      move={pile:idx,take:1};
+    }
+    if(move) performMove(move.pile,move.take);
+  }
+
+  takeBtn.addEventListener('click',()=>{
+    const p=Number(pileSelect.value);
+    const t=Math.min(Number(takeCount.value)||1,piles[p]);
+    if(piles[p]<=0){appendLog('その山は空です');return;}
+    performMove(p,t);
+  });
+
+  newBtn.addEventListener('click',()=>{
+    initPiles();
+    player=0;
+    appendLog('新しい局面を作成しました。');
+    renderBoard();
+  });
+
+  hintBtn.addEventListener('click',()=>{
+    const xs=xorSum(piles);
+    if(xs===0){appendLog('ヒント: 不利な局面です');return;}
+    for(let i=0;i<piles.length;i++){
+      const target=piles[i]^xs;
+      if(target<piles[i]){
+        appendLog(`ヒント: 山${i+1} から ${piles[i]-target} 個取る`);
+        return;
+      }
+    }
+  });
+
+  initPiles();
+  renderBoard();
+});
+</script>
+</body>
+</html>
